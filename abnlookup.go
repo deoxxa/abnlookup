@@ -49,40 +49,53 @@ func Validate(abn string) error {
 	return nil
 }
 
-func Lookup(abn string) error {
+type ABNData struct {
+	ABN  string
+	Name string
+}
+
+func Fetch(abn string) (*ABNData, error) {
 	if err := Validate(abn); err != nil {
-		return errors.Wrap(err, "abnlookup.Lookup: preliminary validation failed")
+		return nil, errors.Wrap(err, "abnlookup.Fetch: preliminary validation failed")
 	}
 
 	res, err := http.Get("https://abr.business.gov.au/ABN/View?abn=" + abn)
 	if err != nil {
-		return errors.Wrap(err, "abnlookup.Lookup: couldn't perform request")
+		return nil, errors.Wrap(err, "abnlookup.Fetch: couldn't perform request")
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
-		return errors.Errorf("abnlookup.Lookup: invalid response code; expected 200 OK but got %s", res.Status)
+		return nil, errors.Errorf("abnlookup.Fetch: invalid response code; expected 200 OK but got %s", res.Status)
 	}
 
 	doc, err := goquery.NewDocumentFromResponse(res)
 	if err != nil {
-		return errors.Wrap(err, "abnlookup.Lookup: couldn't parse response")
+		return nil, errors.Wrap(err, "abnlookup.Fetch: couldn't parse response")
 	}
 	if doc == nil {
-		return errors.Errorf("abnlookup.Lookup: couldn't parse response")
+		return nil, errors.Errorf("abnlookup.Fetch: couldn't parse response")
 	}
 
 	if strings.Contains(doc.Find("div.process-message").Text(), "No record found matching ABN") {
-		return ErrRecordNotFound
+		return nil, ErrRecordNotFound
 	}
 
 	if strings.Contains(doc.Find("div.process-message").Text(), "The number entered is not a valid ABN") {
-		return ErrInvalidABN
+		return nil, ErrInvalidABN
 	}
 
-	if strings.HasPrefix(doc.Find("title").Text(), "Current details for ABN") {
-		return nil
+	if !strings.HasPrefix(doc.Find("title").Text(), "Current details for ABN") {
+		return nil, ErrUnknownResponse
 	}
 
-	return ErrUnknownResponse
+	return &ABNData{
+		ABN:  abn,
+		Name: doc.Find("span[itemprop=legalName]").Text(),
+	}, nil
+}
+
+func Lookup(abn string) error {
+	_, err := Fetch(abn)
+	return err
 }
